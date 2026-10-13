@@ -133,6 +133,8 @@ Optional [Chrome Web Store upload setup](docs/development/webstore-upload.md) ad
 
 See [installation](docs/start/installation.md), [development](docs/development/index.md), and the [documentation index](docs/index.md) for details.
 
+For long Agent tasks, General settings provides independent model/tool timeouts and optional task budgets. Overall task duration is unlimited by default. See [long task execution](docs/development/long-task-runtime.md) for cancellation and recovery behavior.
+
 ## Website and public assets
 
 The [AskTab website](https://hicms.github.io/) is maintained in [hicms/hicms.github.io](https://github.com/hicms/hicms.github.io). Public screenshots and promotional images are managed here through [assets/manifest.json](assets/manifest.json). The README uses these source files directly; the website receives selected copies through the sync script.

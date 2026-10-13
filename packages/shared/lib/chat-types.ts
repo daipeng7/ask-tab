@@ -113,6 +113,7 @@ interface ChatModel {
   supportsReasoning?: boolean;
   supportsImages?: boolean;
   /** Wall-clock timeout in seconds for tool-call execution (default: 300). */
+  /** Legacy catalog field. Runtime settings now own tool deadlines and task budgets. */
   toolTimeoutSeconds?: number;
   /** Context window size in tokens. Overrides the built-in lookup when set. */
   contextWindow?: number;

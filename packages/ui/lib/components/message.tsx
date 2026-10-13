@@ -202,6 +202,7 @@ const PreviewMessage = ({
               return (
                 <div className="w-full" key={key}>
                   <DocumentPreview
+                    error={typeof part.result === 'string' ? part.result : undefined}
                     chatId={message.chatId}
                     state={part.state}
                     args={

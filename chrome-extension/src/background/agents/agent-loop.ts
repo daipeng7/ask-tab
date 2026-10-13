@@ -6,6 +6,7 @@
  */
 
 import { withAbort } from './cancellation';
+import { executeAgentTool, ToolTimeoutError } from './tool-execution';
 import {
   createToolLoopState,
   detectToolCallLoop,
@@ -15,8 +16,11 @@ import {
 import { createLogger } from '../logging/logger-buffer';
 import { SKIPPED_TOOL_RESULT } from '@extension/shared';
 import { diagnostics } from '@extension/shared/lib/diagnostics.js';
+import { defaultRuntimeConfig } from '@extension/storage';
 import { EventStream, validateToolArguments } from '@mariozechner/pi-ai';
+import type { TaskBudget } from './task-budget';
 import type { ToolLoopState } from './tool-loop-detection';
+import type { RuntimeConfig } from '@extension/storage';
 import type {
   AgentContext,
   AgentEvent,
@@ -32,6 +36,8 @@ const agentLoopLog = createLogger('agent');
 
 type CheckpointConfig = AgentLoopConfig & {
   onCheckpoint?: (messages: AgentMessage[]) => Promise<void>;
+  runtime?: RuntimeConfig;
+  budget?: TaskBudget;
 };
 
 /**
@@ -229,6 +235,7 @@ const runLoop = async (
     // Inner loop: process tool calls and steering messages
     while (hasMoreToolCalls || pendingMessages.length > 0) {
       signal?.throwIfAborted();
+      config.budget?.check();
       if (!firstTurn) {
         stream.push({ type: 'turn_start' });
       } else {
@@ -253,6 +260,7 @@ const runLoop = async (
         streamFn,
       );
       newMessages.push(message);
+      config.budget?.record(message.usage);
       signal?.throwIfAborted();
 
       if (message.stopReason !== 'error' && message.stopReason !== 'aborted') {
@@ -283,9 +291,15 @@ const runLoop = async (
             newMessages.push(result);
             await config.onCheckpoint?.(currentContext.messages.slice());
           },
+          config.runtime,
+          config.budget,
         );
         toolResults.push(...toolExecution.toolResults);
         steeringAfterTools = toolExecution.steeringMessages ?? null;
+        if (toolExecution.timeoutError) {
+          stream.push({ type: 'turn_end', message, toolResults });
+          throw toolExecution.timeoutError;
+        }
       }
 
       stream.push({ type: 'turn_end', message, toolResults });
@@ -347,6 +361,7 @@ const streamAssistantResponse = async (
     provider: config.model.provider,
     ...summarizeLlmContext(llmContext),
   });
+  config.budget?.check();
 
   const response = await withAbort(signal, () =>
     streamFn(config.model, llmContext, {
@@ -427,7 +442,13 @@ const executeToolCalls = async (
   getSteeringMessages?: AgentLoopConfig['getSteeringMessages'],
   toolLoopState?: ToolLoopState,
   onResult?: (result: ToolResultMessage) => Promise<void>,
-): Promise<{ toolResults: ToolResultMessage[]; steeringMessages?: AgentMessage[] }> => {
+  runtime: RuntimeConfig = defaultRuntimeConfig,
+  budget?: TaskBudget,
+): Promise<{
+  toolResults: ToolResultMessage[];
+  steeringMessages?: AgentMessage[];
+  timeoutError?: ToolTimeoutError;
+}> => {
   const toolCalls = assistantMessage.content.filter(c => c.type === 'toolCall');
   const results: ToolResultMessage[] = [];
   let steeringMessages: AgentMessage[] | undefined;
@@ -501,6 +522,7 @@ const executeToolCalls = async (
       }
     }
 
+    budget?.check();
     stream.push({
       type: 'tool_execution_start',
       toolCallId: toolCall.id,
@@ -510,15 +532,19 @@ const executeToolCalls = async (
 
     let result: AgentToolResult<unknown>;
     let isError = false;
+    let timeoutError: ToolTimeoutError | undefined;
 
     try {
       if (!tool) throw new Error(`Tool ${toolCall.name} not found`);
 
       const validatedArgs = validateToolArguments(tool, toolCall);
-
-      result = await withAbort(signal, () =>
-        tool.execute(toolCall.id, validatedArgs, signal, partialResult => {
-          if (signal?.aborted) return;
+      result = await executeAgentTool(
+        tool,
+        toolCall.id,
+        validatedArgs,
+        signal,
+        runtime,
+        partialResult => {
           stream.push({
             type: 'tool_execution_update',
             toolCallId: toolCall.id,
@@ -526,13 +552,14 @@ const executeToolCalls = async (
             args: toolCall.arguments,
             partialResult,
           });
-        }),
+        },
       );
     } catch (e) {
       signal?.throwIfAborted();
+      if (e instanceof ToolTimeoutError) timeoutError = e;
       result = {
         content: [{ type: 'text', text: e instanceof Error ? e.message : String(e) }],
-        details: {},
+        details: { ...(e instanceof ToolTimeoutError ? { timedOut: true } : {}) },
       };
       isError = true;
     }
@@ -581,6 +608,15 @@ const executeToolCalls = async (
     stream.push({ type: 'message_start', message: toolResultMessage });
     stream.push({ type: 'message_end', message: toolResultMessage });
     await onResult?.(toolResultMessage);
+
+    if (timeoutError) {
+      for (const skipped of toolCalls.slice(index + 1)) {
+        const skippedResult = skipToolCall(skipped, stream);
+        results.push(skippedResult);
+        await onResult?.(skippedResult);
+      }
+      return { toolResults: results, timeoutError };
+    }
 
     if (getSteeringMessages) {
       const steering = await withAbort(signal, () => getSteeringMessages());

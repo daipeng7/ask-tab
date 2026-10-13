@@ -8,6 +8,7 @@ import { makeConvertToLlm } from './message-adapter';
 import { chatModelToPiModel } from './model-adapter';
 import { createModelCheckpoint, modelSourceKey } from './model-transcript';
 import { createStreamFn } from './stream-bridge';
+import { TaskBudget } from './task-budget';
 import { requireSession, watchSession } from '../ask-service/client';
 import { getProviderTokenLimit, setProviderTokenLimit } from '../context/provider-limit-cache';
 import { hasOversizedToolResults, truncateToolResults } from '../context/tool-result-truncation';
@@ -24,6 +25,7 @@ import { IS_FIREFOX } from '@extension/env';
 import { buildSystemPrompt, resolveToolPromptHints, resolveToolListings } from '@extension/shared';
 import {
   serverModelsStorage,
+  runtimeConfigStorage,
   selectedModelStorage,
   getAgent,
   getEnabledWorkspaceFiles,
@@ -35,15 +37,15 @@ import {
   updateSessionTokens,
 } from '@extension/storage';
 import { nanoid } from 'nanoid';
+import type { BudgetReason } from './task-budget';
 import type { ErrorCategory } from '../errors/error-classification';
 import type { ChatModel, ChatMessagePart, ModelProvider } from '@extension/shared';
-import type { DbChatModel, DbChat, AskSession } from '@extension/storage';
+import type { DbChatModel, DbChat, AskSession, RuntimeConfig } from '@extension/storage';
 import type { AgentEvent, AgentMessage, StreamFn } from '@mariozechner/pi-agent-core';
 import type { AssistantMessage, ImageContent, Message, TextContent } from '@mariozechner/pi-ai';
 
 const agentLog = createLogger('agent');
 
-const DEFAULT_TIMEOUT_SECONDS = 600;
 const MAX_RETRY_ATTEMPTS = 3;
 
 // ── Shared runAgent lifecycle ────────────
@@ -66,6 +68,7 @@ interface RunAgentResult {
   stepCount: number;
   /** Whether the agent was stopped by the wall-clock timeout */
   timedOut: boolean;
+  budgetReason?: BudgetReason;
   /** Number of retry attempts used (0 = first attempt succeeded) */
   retryAttempts: number;
   /** Error category if the final result has an error */
@@ -123,6 +126,7 @@ interface RunAgentOpts {
     messages: AgentMessage[];
     stepCount: number;
     timedOut: boolean;
+    budgetReason?: BudgetReason;
   }) => void;
 }
 
@@ -171,7 +175,8 @@ const executeAttempt = async (opts: {
   piModel: ReturnType<typeof chatModelToPiModel>['model'];
   streamFn: ReturnType<typeof createStreamFn>;
   tools: Awaited<ReturnType<typeof getAgentTools>>;
-  timeoutMs: number;
+  runtime: RuntimeConfig;
+  budget: TaskBudget;
   model: ChatModel;
   sessionSnapshot?: AskSession;
   systemPrompt: string;
@@ -194,7 +199,8 @@ const executeAttempt = async (opts: {
     piModel,
     streamFn,
     tools,
-    timeoutMs,
+    runtime,
+    budget,
     model,
     sessionSnapshot,
     systemPrompt,
@@ -216,6 +222,8 @@ const executeAttempt = async (opts: {
 
   // Create fresh Agent for this attempt
   const agentOpts: ConstructorParameters<typeof Agent>[0] = {
+    runtime,
+    budget,
     initialState: {
       systemPrompt,
       model: piModel,
@@ -238,7 +246,6 @@ const executeAttempt = async (opts: {
   let accOutputTokens = 0;
   let lastStepText = '';
   let stepCount = 0;
-  let timedOut = false;
   let promptEmitted = false;
 
   // Subscribe to events
@@ -353,14 +360,15 @@ const executeAttempt = async (opts: {
           agent,
           messages: event.messages,
           stepCount,
-          timedOut,
+          timedOut: budget.reason === 'time_budget',
+          budgetReason: budget.reason,
         });
         break;
       }
     }
   });
 
-  // Wire abort: combine external signal + wall-clock timeout
+  // Task budgets are checked at loop boundaries; cancellation remains immediate.
   const internalController = new AbortController();
   const abortAttempt = () => internalController.abort();
 
@@ -372,17 +380,10 @@ const executeAttempt = async (opts: {
     }
   }
 
-  const timer = setTimeout(() => {
-    timedOut = true;
-    agentLog.warn('Agent timeout', { timeoutMs });
-    internalController.abort();
-  }, timeoutMs);
-  agentLog.trace('Agent timeout set', { timeoutMs });
-
   internalController.signal.addEventListener(
     'abort',
     () => {
-      agentLog.trace('Agent abort signal fired', { timedOut });
+      agentLog.trace('Agent abort signal fired');
       agent.abort();
     },
     { once: true },
@@ -402,10 +403,9 @@ const executeAttempt = async (opts: {
       await agent.prompt(prompt);
     }
   } finally {
-    clearTimeout(timer);
     signal?.removeEventListener('abort', abortAttempt);
   }
-  agentLog.trace('Agent prompt completed', { stepCount, timedOut });
+  agentLog.trace('Agent prompt completed', { stepCount, budgetReason: budget.reason });
 
   // Build result — fall back to tool result content when the LLM produced no text
   let responseText = lastStepText;
@@ -426,12 +426,7 @@ const executeAttempt = async (opts: {
   }
 
   responseText = responseText || '(No response generated)';
-  let error = agent.state.error;
-
-  // If timed out, treat as graceful end (not error)
-  if (timedOut && error) {
-    error = undefined;
-  }
+  const error = agent.state.error;
 
   return {
     responseText,
@@ -440,7 +435,8 @@ const executeAttempt = async (opts: {
     error,
     agent,
     stepCount,
-    timedOut,
+    timedOut: budget.reason === 'time_budget',
+    budgetReason: budget.reason,
     retryAttempts: 0, // caller updates this
   };
 };
@@ -504,7 +500,8 @@ const runAgent = async (opts: RunAgentOpts): Promise<RunAgentResult> => {
       ? []
       : (toolsOverride ?? (await getAgentTools({ headless: headlessTools, chatId })));
 
-  const timeoutMs = (model.toolTimeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
+  const runtime = await runtimeConfigStorage.get();
+  const budget = new TaskBudget(runtime);
 
   const operationController = new AbortController();
   const abortOperation = () => operationController.abort();
@@ -544,7 +541,8 @@ const runAgent = async (opts: RunAgentOpts): Promise<RunAgentResult> => {
         piModel,
         streamFn,
         tools,
-        timeoutMs,
+        runtime,
+        budget,
         model,
         sessionSnapshot,
         systemPrompt,

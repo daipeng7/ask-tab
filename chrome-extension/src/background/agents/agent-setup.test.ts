@@ -128,7 +128,8 @@ vi.mock('@extension/shared', () => ({
   resolveToolListings: vi.fn(() => []),
 }));
 
-vi.mock('@extension/storage', () => ({
+vi.mock('@extension/storage', async importOriginal => ({
+  ...(await importOriginal<typeof import('@extension/storage')>()),
   serverModelsStorage: { get: vi.fn(async () => []) },
   selectedModelStorage: { get: vi.fn(async () => null) },
   getAgent: vi.fn(async () => undefined),

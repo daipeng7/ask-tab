@@ -1,4 +1,17 @@
 {
+  "runtime_title": { "message": "Agent runtime" },
+  "runtime_description": {
+    "message": "Long tasks have no overall deadline by default. Model and tool calls have independent timeouts. Changes apply to new tasks."
+  },
+  "runtime_timeBudget": { "message": "Task time budget (minutes, 0 = unlimited)" },
+  "runtime_tokenBudget": { "message": "Task token budget (0 = unlimited)" },
+  "runtime_modelIdle": { "message": "Model event idle timeout (seconds)" },
+  "runtime_toolTimeout": { "message": "Tool call timeout (seconds)" },
+  "runtime_longToolTimeout": { "message": "Research / JavaScript call timeout (seconds)" },
+  "runtime_budgetHint": {
+    "message": "Budgets pause at execution boundaries. Token budget is settled after model usage is returned and may be exceeded by one response; auxiliary summaries and background subagents are counted separately. Timed-out tools pause the task; inspect their effects before continuing. Closing the browser stops execution; progress can be used in your next message."
+  },
+  "runtime_save": { "message": "Save runtime settings" },
   "extensionDescription": {
     "description": "Extension description",
     "message": "AskTab - Tu asistente de IA personal en el navegador. Cualquier SO. Cualquier plataforma."

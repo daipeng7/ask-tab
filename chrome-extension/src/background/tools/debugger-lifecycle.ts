@@ -1,4 +1,4 @@
-import { registerToolCleanup } from './tool-lifecycle';
+import { getToolExecutionOwner, registerToolCleanup } from './tool-lifecycle';
 
 interface DebuggerSession {
   owners: Map<AbortSignal, Set<Promise<unknown>>>;
@@ -17,6 +17,7 @@ export const withDebuggerSession = async <T>(
 ): Promise<T> => {
   if (!signal) return execute();
   signal.throwIfAborted();
+  const owner = getToolExecutionOwner(signal);
   const debuggee = typeof target === 'number' ? { tabId: target } : target;
   const key =
     debuggee.tabId != null
@@ -34,16 +35,16 @@ export const withDebuggerSession = async <T>(
   if (!session) sessions.set(key, (session = { owners: new Map() }));
   if (onDetach) session.onDetach = onDetach;
   const current = session;
-  let pending = current.owners.get(signal);
+  let pending = current.owners.get(owner);
   if (!pending) {
     pending = new Set();
-    current.owners.set(signal, pending);
+    current.owners.set(owner, pending);
     const operations = pending;
     registerToolCleanup(signal, current, async () => {
       // Agent cancellation stops awaiting tools before their work has settled.
       // In particular, a late attach must finish before we detach its target.
       await Promise.allSettled([...operations]);
-      current.owners.delete(signal);
+      current.owners.delete(owner);
       if (current.owners.size > 0) return;
       current.detaching = new Promise<void>(resolve => {
         try {

@@ -2,6 +2,7 @@
 // Spawn, list, and kill subagents that run in the service worker using runAgent().
 // Non-blocking: executeSpawnSubagent returns immediately; the actual run fires in the background.
 
+import { getToolExecutionOwner } from './tool-lifecycle';
 import { resolveDefaultModel, runAgent } from '../agents/agent-setup';
 import { makeConvertToLlm } from '../agents/message-adapter';
 import { createLogger } from '../logging/logger-buffer';
@@ -249,7 +250,6 @@ const runSubagentBackground = async (
     log.info('Subagent calling runAgent', {
       runId: run.runId,
       modelId: model.id,
-      timeoutMs: (model.toolTimeoutSeconds ?? 600) * 1000,
       toolCount: filteredTools.length,
     });
     const result = await runAgent({
@@ -547,8 +547,12 @@ const executeSpawnSubagent = async (
 
   // Set up abort
   const abortController = new AbortController();
-  const abortFromParent = () => abortController.abort(context?.signal?.reason);
-  context?.signal?.addEventListener('abort', abortFromParent, { once: true });
+  const parentSignal = context?.signal
+    ? AbortSignal.any([context.signal, getToolExecutionOwner(context.signal)])
+    : undefined;
+  parentSignal?.throwIfAborted();
+  const abortFromParent = () => abortController.abort(parentSignal?.reason);
+  parentSignal?.addEventListener('abort', abortFromParent, { once: true });
   const displayTask = options?.label ?? args.task;
   const run: SubagentRun = {
     runId,
@@ -563,7 +567,7 @@ const executeSpawnSubagent = async (
 
   // Fire background run — intentionally unawaited
   void runSubagentBackground(run, args, context?.chatId, options).finally(() => {
-    context?.signal?.removeEventListener('abort', abortFromParent);
+    parentSignal?.removeEventListener('abort', abortFromParent);
   });
 
   return JSON.stringify({

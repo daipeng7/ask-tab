@@ -1,4 +1,17 @@
 {
+  "runtime_title": { "message": "Agent 长任务运行" },
+  "runtime_description": {
+    "message": "默认不限制整段任务时长，模型请求和工具调用分别设超时。修改对新任务生效。"
+  },
+  "runtime_timeBudget": { "message": "任务时间预算（分钟，0 表示不限）" },
+  "runtime_tokenBudget": { "message": "任务 Token 预算（0 表示不限）" },
+  "runtime_modelIdle": { "message": "模型事件空闲超时（秒）" },
+  "runtime_toolTimeout": { "message": "普通工具调用超时（秒）" },
+  "runtime_longToolTimeout": { "message": "研究 / JavaScript 调用超时（秒）" },
+  "runtime_budgetHint": {
+    "message": "预算在执行边界检查。Token 在模型返回用量后结算，可能超过一个回复的用量；辅助摘要和后台子 Agent 单独计量。工具超时会暂停任务，请核实操作结果后继续。关闭浏览器会停止执行，下一条消息可利用已保存进度继续。"
+  },
+  "runtime_save": { "message": "保存运行设置" },
   "tab_backup": { "message": "备份" },
   "extensionDescription": {
     "description": "Extension description",

@@ -37,6 +37,7 @@ export const zipBundle = async (
   const fileList = await fg(
     [
       '**/*', // Pick all nested files
+      '!_metadata/**', // Chrome generates this cache when loading unpacked builds.
       ...(!withMaps ? ['!**/(*.js.map|*.css.map)'] : []), // Exclude source maps conditionally
     ],
     {

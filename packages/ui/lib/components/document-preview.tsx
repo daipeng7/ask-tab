@@ -15,11 +15,12 @@ type DocumentPreviewProps = {
   args?: { id?: string; title: string; kind: ArtifactKind; content?: string };
   state?: ToolPartState;
   chatId?: string;
+  error?: string;
 };
 
 const previewPlugins = { cjk };
 
-const DocumentPreview = ({ result, args, state, chatId }: DocumentPreviewProps) => {
+const DocumentPreview = ({ result, args, state, chatId, error }: DocumentPreviewProps) => {
   const { artifact, setArtifact } = useArtifact();
   const previewId = useId();
   const storedId = result?.id ?? args?.id;
@@ -111,7 +112,9 @@ const DocumentPreview = ({ result, args, state, chatId }: DocumentPreviewProps) 
 
       <div className="border-border bg-muted h-40 overflow-hidden rounded-b-xl border border-t-0 p-4">
         {hasError ? (
-          <p className="text-muted-foreground text-sm">Document could not be created.</p>
+          <p className="text-muted-foreground text-sm">
+            {error || 'Document could not be created.'}
+          </p>
         ) : content ? (
           <div className="pointer-events-none h-full select-none" inert>
             {kind === 'text' ? (

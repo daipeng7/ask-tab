@@ -8,7 +8,29 @@ import {
   MAX_CONCURRENT,
   SUBAGENT_KEEP_ALIVE_ALARM,
 } from './subagent';
+import { bindToolExecutionOwner } from './tool-lifecycle';
+import { withExecutionTimeout } from '../agents/execution-timeout';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+it('cancels a background subagent after its spawn call has returned and disposed its timeout', async () => {
+  const parent = new AbortController();
+  mockRunAgent.mockImplementationOnce(async ({ signal }: { signal: AbortSignal }) => {
+    await new Promise<void>(resolve =>
+      signal.addEventListener('abort', () => resolve(), { once: true }),
+    );
+    signal.throwIfAborted();
+  });
+  await withExecutionTimeout(parent.signal, 60, 'spawn timeout', async call => {
+    bindToolExecutionOwner(call, parent.signal);
+    await executeSpawnSubagent({ task: 'background work' }, { signal: call });
+  });
+  await vi.waitFor(() => expect(mockRunAgent).toHaveBeenCalled());
+  const run = [...registry.values()].find(r => r.task === 'background work')!;
+  expect(run.abortController.signal.aborted).toBe(false);
+  parent.abort();
+  expect(run.abortController.signal.aborted).toBe(true);
+  await vi.waitFor(() => expect(run.status).toBe('cancelled'));
+});
 
 // ---------------------------------------------------------------------------
 // Import after mocks

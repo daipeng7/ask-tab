@@ -1,3 +1,4 @@
+import { RuntimeSettings } from './runtime-settings';
 import { ASK_SERVICE_URL, LOCAL_ASK_SERVICE_URL } from '@extension/env';
 import { useT, LOCALE_OPTIONS } from '@extension/i18n';
 import {
@@ -201,6 +202,8 @@ const Settings = () => {
             </Select>
           </div>
         </div>
+
+        <RuntimeSettings />
 
         {saved && (
           <span className="text-muted-foreground flex items-center gap-1 text-xs">

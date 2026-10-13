@@ -1,4 +1,4 @@
-import { registerToolCleanup } from './tool-lifecycle';
+import { getToolExecutionOwner, registerToolCleanup } from './tool-lifecycle';
 
 const owners = new Map<number, AbortSignal | undefined>();
 const queues = new Map<number, Promise<unknown>>();
@@ -21,21 +21,22 @@ export const runBrowserTabAction = <T>(
 ): Promise<T | string> => {
   if (signal?.aborted) return Promise.resolve('Error: Browser action was cancelled.');
   const tabId = args.tabId;
+  const owner = signal ? getToolExecutionOwner(signal) : undefined;
   if (tabId == null) return execute();
   return onTab(tabId, async () => {
     if (signal?.aborted) return 'Error: Browser action was cancelled.';
     if (args.action === 'snapshot') {
-      owners.set(tabId, signal);
+      owners.set(tabId, owner);
       if (signal) {
         registerToolCleanup(signal, `browser:${tabId}`, () =>
           onTab(tabId, async () => {
-            if (owners.get(tabId) !== signal) return;
+            if (owners.get(tabId) !== owner) return;
             owners.delete(tabId);
             await clear(tabId);
           }),
         );
       }
-    } else if (signal && args.ref != null && owners.get(tabId) !== signal) {
+    } else if (signal && args.ref != null && owners.get(tabId) !== owner) {
       return 'Error: Snapshot refs belong to another or completed task. Run "snapshot" to refresh refs.';
     }
     return execute();

@@ -157,7 +157,8 @@ vi.mock('../ask-service/endpoint', () => ({
   getServiceUrl: () => 'http://ask.test',
   serviceUrlReady: async () => {},
 }));
-vi.mock('@extension/storage', () => ({
+vi.mock('@extension/storage', async original => ({
+  ...(await original<typeof import('@extension/storage')>()),
   activeAgentStorage: {
     get: vi.fn(() => Promise.resolve('main')),
   },

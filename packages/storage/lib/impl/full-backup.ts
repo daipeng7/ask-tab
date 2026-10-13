@@ -1,4 +1,5 @@
 import { chatDb } from './chat-db.js';
+import { assertRuntimeConfig } from './runtime-config-storage.js';
 import { isSuggestedActionIconId, MAX_SUGGESTED_ACTIONS } from './suggested-actions-storage.js';
 import { assertToolConfig } from './tool-config-storage.js';
 import type {
@@ -22,6 +23,7 @@ const BACKUP_VERSION = 2;
  */
 const LOCAL_KEYS = new Set([
   'settings',
+  'agent-runtime',
   'tool-config',
   'suggested-actions',
   'selected-model-id',
@@ -190,6 +192,7 @@ const assertAiPreferences = (local: Record<string, unknown>): void => {
     throw new Error('Invalid backup configuration: reasoning-selections');
   }
   if ('tool-config' in local) assertToolConfig(local['tool-config']);
+  if ('agent-runtime' in local) assertRuntimeConfig(local['agent-runtime']);
   if ('suggested-actions' in local) assertSuggestedActions(local['suggested-actions']);
   if ('stt-config' in local) {
     assertFields(local['stt-config'], ['engine', 'openai', 'language', 'hotkey'], 'stt-config');

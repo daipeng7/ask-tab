@@ -1,5 +1,6 @@
 import { markInterruptedToolCalls } from '../chat-cancellation.js';
 import { MAX_QUEUED_MESSAGES } from '../chat-queue.js';
+import { taskBudgetNotice } from '../task-budget-notice.js';
 import { nanoid } from 'nanoid';
 import { useState, useRef, useCallback, useEffect } from 'react';
 import type {
@@ -226,6 +227,16 @@ const useLLMStream = ({
         updateAssistantPart(parts => [
           ...parts,
           { type: 'text' as const, text: '\n\n⚠️ Agent timed out — response may be incomplete.' },
+        ]);
+      }
+      const budgetNotice = taskBudgetNotice(end.finishReason);
+      if (budgetNotice) {
+        updateAssistantPart(parts => [
+          ...parts,
+          {
+            type: 'text' as const,
+            text: budgetNotice,
+          },
         ]);
       }
       setStatus('idle');

@@ -7,11 +7,14 @@
  */
 
 import { withAbort } from './cancellation';
+import { withExecutionTimeout } from './execution-timeout';
 import { chatModelToPiModel } from './model-adapter';
+import { streamWithIdleTimeout } from './model-stream-timeout';
 import { loadReasoningSettings, withReasoningSettings } from './reasoning-payload';
 import { confirmSessionAfterModelError, requireSession } from '../ask-service/client';
 import { serviceUrlReady } from '../ask-service/endpoint';
 import { createLogger } from '../logging/logger-buffer';
+import { runtimeConfigStorage } from '@extension/storage';
 import { completeSimple, streamGoogle, streamSimple } from '@mariozechner/pi-ai';
 import { buildBaseOptions } from '@mariozechner/pi-ai/dist/providers/simple-options.js';
 import type { ChatModel } from '@extension/shared';
@@ -53,10 +56,17 @@ export const createStreamFn = (modelConfig: ChatModel): StreamFn => {
       maxTokens: model.maxTokens,
       reasoning,
     });
-    const stream = streamModel(
+    const runtime = await runtimeConfigStorage.get();
+    const stream = streamWithIdleTimeout(
       model,
-      context,
-      withReasoningSettings(model.api, reasoning, options),
+      options?.signal,
+      runtime.streamIdleTimeoutSeconds,
+      signal =>
+        streamModel(
+          model,
+          context,
+          withReasoningSettings(model.api, reasoning, { ...options, signal }),
+        ),
     );
     void stream.result().then(message => {
       if (message.stopReason === 'error')
@@ -82,19 +92,27 @@ export const completeText = async (
   };
   const apiKey = (await withAbort(opts?.signal, () => requireSession(session))).token;
   const reasoning = await withAbort(opts?.signal, () => loadReasoningSettings(modelConfig.id));
-  const result = await withAbort(opts?.signal, () =>
-    completeSimple(
-      model,
-      context,
-      withReasoningSettings(model.api, reasoning, {
-        maxTokens: opts?.maxTokens,
-        apiKey,
-        signal: opts?.signal,
-      }),
-    ),
+  const runtime = await runtimeConfigStorage.get();
+  const result = await withExecutionTimeout(
+    opts?.signal,
+    runtime.streamIdleTimeoutSeconds,
+    `Auxiliary model request timed out after ${runtime.streamIdleTimeoutSeconds}s`,
+    signal =>
+      completeSimple(
+        model,
+        context,
+        withReasoningSettings(model.api, reasoning, {
+          maxTokens: opts?.maxTokens,
+          apiKey,
+          signal,
+        }),
+      ),
   );
   if (result.stopReason === 'error')
     void confirmSessionAfterModelError(model.baseUrl, session.token);
+  if (result.stopReason === 'error' || result.stopReason === 'aborted') {
+    throw new Error(result.errorMessage ?? 'Auxiliary model request failed');
+  }
   return result.content
     .filter((c): c is TextContent => c.type === 'text')
     .map(c => c.text)

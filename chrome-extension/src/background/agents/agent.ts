@@ -6,6 +6,8 @@
 import { agentLoop, agentLoopContinue } from './agent-loop';
 import { convertToLlm as defaultConvertToLlm } from './message-adapter';
 import { releaseToolResources } from '../tools/tool-lifecycle';
+import type { TaskBudget } from './task-budget';
+import type { RuntimeConfig } from '@extension/storage';
 import type {
   AgentContext,
   AgentEvent,
@@ -39,6 +41,8 @@ export interface AgentOptions {
   onCheckpoint?: (messages: AgentMessage[]) => Promise<void>;
   /** Steering messages owned outside the agent; polled whenever the steer() queue is empty. */
   getSteeringMessages?: () => Promise<AgentMessage[]>;
+  runtime?: RuntimeConfig;
+  budget?: TaskBudget;
 }
 
 export class Agent {
@@ -64,6 +68,8 @@ export class Agent {
   private _maxRetryDelayMs?: number;
   private onCheckpoint?: AgentOptions['onCheckpoint'];
   private externalSteering?: AgentOptions['getSteeringMessages'];
+  private runtime?: RuntimeConfig;
+  private budget?: TaskBudget;
 
   constructor(opts: AgentOptions = {}) {
     this._state = {
@@ -89,6 +95,8 @@ export class Agent {
     this._maxRetryDelayMs = opts.maxRetryDelayMs;
     this.onCheckpoint = opts.onCheckpoint;
     this.externalSteering = opts.getSteeringMessages;
+    this.runtime = opts.runtime;
+    this.budget = opts.budget;
   }
 
   get sessionId(): string | undefined {
@@ -315,7 +323,9 @@ export class Agent {
 
     let skipInitialSteeringPoll = options?.skipInitialSteeringPoll === true;
 
-    const config: AgentLoopConfig & Pick<AgentOptions, 'onCheckpoint'> = {
+    const config: AgentLoopConfig & Pick<AgentOptions, 'onCheckpoint' | 'runtime' | 'budget'> = {
+      runtime: this.runtime,
+      budget: this.budget,
       model,
       reasoning,
       sessionId: this._sessionId,

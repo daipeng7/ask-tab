@@ -11,7 +11,7 @@ import { serviceUrlReady } from '../ask-service/endpoint';
 import { createTransformContext } from '../context/transform';
 import { createLogger } from '../logging/logger-buffer';
 import { runMemoryFlushIfNeeded } from '../memory/memory-flush';
-import { markInterruptedToolCalls } from '@extension/shared';
+import { markInterruptedToolCalls, taskBudgetNotice } from '@extension/shared';
 import { activeAgentStorage, saveArtifact } from '@extension/storage';
 import type { chatModelToPiModel } from './model-adapter';
 import type { RunSteering } from './run-steering';
@@ -428,7 +428,7 @@ const runLLMStream = async (port: StreamTarget, active: ActiveStream): Promise<v
         if (controller.signal.aborted) return;
         const agentError = info.agent.state.error;
         // Timeout is a graceful end, not an error — fall through to normal completion
-        if (agentError && !info.timedOut) {
+        if (agentError && !info.timedOut && !info.budgetReason) {
           streamLog.warn('Agent error', { chatId, error: agentError, steps: info.stepCount });
           agentErrorMessage = agentError;
           return;
@@ -439,7 +439,8 @@ const runLLMStream = async (port: StreamTarget, active: ActiveStream): Promise<v
           .filter((m): m is AssistantMessage => m.role === 'assistant')
           .pop();
         let finishReason = 'stop';
-        if (info.timedOut) finishReason = 'timeout';
+        if (info.budgetReason) finishReason = info.budgetReason;
+        else if (info.timedOut) finishReason = 'timeout';
         else if (lastAssistant?.stopReason === 'length') finishReason = 'length';
 
         const compactionResult = getCompactionResult();
@@ -499,9 +500,12 @@ const runLLMStream = async (port: StreamTarget, active: ActiveStream): Promise<v
       const { addMessage, finishModelTurn, touchChat, updateSessionTokens } = await import(
         '@extension/storage'
       );
-      if (controller.signal.aborted)
-        assistantMessage.parts = markInterruptedToolCalls(assistantParts);
-      if (controller.signal.aborted) {
+      const budgetNotice = taskBudgetNotice(endPayload?.finishReason ?? '');
+      if (budgetNotice)
+        assistantMessage.parts = [...assistantParts, { type: 'text', text: budgetNotice }];
+      if (controller.signal.aborted || runResult.budgetReason)
+        assistantMessage.parts = markInterruptedToolCalls(assistantMessage.parts);
+      if (controller.signal.aborted || runResult.budgetReason) {
         await finishModelTurn(
           assistantMessage,
           sourceKey,
@@ -512,7 +516,7 @@ const runLLMStream = async (port: StreamTarget, active: ActiveStream): Promise<v
       await touchChat(chatId);
       if (endPayload?.usage) await updateSessionTokens(chatId, endPayload.usage);
     }
-    const finalError = runResult.error ?? agentErrorMessage;
+    const finalError = runResult.budgetReason ? undefined : (runResult.error ?? agentErrorMessage);
     if (finalError) sendError(port, chatId, finalError);
     if (endPayload) sendEnd(port, endPayload);
   } catch (err) {
@@ -558,6 +562,7 @@ interface ActiveStream {
   segmentIds: Set<string>;
   steering: RunSteering;
   status: StreamingStatus;
+  budgetPaused?: boolean;
 }
 
 const activeStreams = new Map<string, ActiveStream>();
@@ -656,7 +661,7 @@ const stopLLMStream = (chatId: string, assistantMessageId?: string): boolean => 
 };
 
 const runOutcome = (active: ActiveStream): RunOutcome => {
-  if (active.controller.signal.aborted) return 'stopped';
+  if (active.controller.signal.aborted || active.budgetPaused) return 'stopped';
   // Only LLM_STREAM_END marks a turn idle; anything else ended without completing.
   return active.status === 'idle' ? 'completed' : 'error';
 };
@@ -706,6 +711,11 @@ const handleLLMStream = async (
       if (controller.signal.aborted) return;
       if (message.type === 'LLM_STREAM_CHUNK') active.status = 'streaming';
       if (message.type === 'LLM_STREAM_END' || message.type === 'LLM_STREAM_ERROR') {
+        if (
+          message.type === 'LLM_STREAM_END' &&
+          (message.finishReason === 'time_budget' || message.finishReason === 'token_budget')
+        )
+          active.budgetPaused = true;
         active.status = message.type === 'LLM_STREAM_END' ? 'idle' : 'error';
         notifyRunningChats();
       }

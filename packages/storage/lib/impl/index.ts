@@ -1,4 +1,10 @@
 export { settingsStorage, type SettingsData, type LocaleCode } from './settings-storage.js';
+export {
+  runtimeConfigStorage,
+  defaultRuntimeConfig,
+  assertRuntimeConfig,
+  type RuntimeConfig,
+} from './runtime-config-storage.js';
 export { serverModelsStorage } from './server-models-storage.js';
 export {
   modelTiers,

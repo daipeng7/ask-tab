@@ -16,7 +16,10 @@ vi.mock('../logging/logger-buffer', () => ({
   }),
 }));
 
-vi.mock('../tools/tool-lifecycle', () => ({ releaseToolResources: vi.fn() }));
+vi.mock('../tools/tool-lifecycle', async original => ({
+  ...(await original<typeof import('../tools/tool-lifecycle')>()),
+  releaseToolResources: vi.fn(),
+}));
 
 const MODEL: Model<'openai-completions'> = {
   id: 'test-model',

@@ -262,7 +262,9 @@ describe('completeText', () => {
     vi.mocked(confirmSessionAfterModelError).mockClear();
     mockCompleteSimpleResult = makeAssistantMessage({ content: [], stopReason: 'error' });
 
-    await completeText(TEST_CHAT_MODEL, 'System', 'User');
+    await expect(completeText(TEST_CHAT_MODEL, 'System', 'User')).rejects.toThrow(
+      'Auxiliary model request failed',
+    );
 
     expect(confirmSessionAfterModelError).toHaveBeenCalledWith(
       'https://api.openai.com/v1',

@@ -377,7 +377,6 @@ const handleChannelMessageInner = async (
         }
         channelLog.trace('LLM request', {
           model: model.id,
-          timeoutSeconds: model.toolTimeoutSeconds ?? 300,
         });
 
         // 10. Draft streaming state (Telegram only)
